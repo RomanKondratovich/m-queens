@@ -9,7 +9,7 @@
 //#define TESTSUITE
 
 #ifndef N
-#define N 17
+#define N 7
 #endif
 #define MAXN 29
 
@@ -30,6 +30,9 @@ double get_time() {
 
 uint64_t nqueens(uint_fast8_t n) {
 
+  // parallel factor
+  #define P_FACT 4
+
   // counter for the number of solutions
   // sufficient until n=29
   uint_fast64_t num = 0;
@@ -38,8 +41,11 @@ uint64_t nqueens(uint_fast8_t n) {
   // by forcing second queen to be AFTER the first queen.
   //
   uint_fast16_t num_starts = ((n - 2) * (n - 2) * (n - 1)) / 2;
+
+  // ensure start_queens is a multiple of P_FACT
+  uint_fast16_t array_size = num_starts + P_FACT - (num_starts % P_FACT);
   uint_fast16_t start_cnt = 0;
-  uint_fast8_t start_queens[num_starts][2];
+  uint_fast8_t start_queens[array_size][2];
   for (uint_fast8_t q0 = 0; q0 < n - 2; q0++) {
     for (uint_fast8_t q1 = q0 + 2; q1 < n; q1++) {
       start_queens[start_cnt][0] = q0;
@@ -48,60 +54,77 @@ uint64_t nqueens(uint_fast8_t n) {
     }
   }
 
+
 #pragma omp parallel for reduction(+ : num) schedule(dynamic)
-  for (uint_fast16_t cnt = 0; cnt < start_cnt; cnt++) {
-    uint_fast32_t cols[MAXN], posibs[MAXN]; // Our backtracking 'stack'
-    uint_fast32_t diagl[MAXN], diagr[MAXN];
-    uint_fast32_t bit0 = 1 << start_queens[cnt][0]; // The first queen placed
-    uint_fast32_t bit1 = 1 << start_queens[cnt][1]; // The second queen placed
-    int_fast16_t d = 0; // d is our depth in the backtrack stack
-    // The -1 here is used to fill all 'coloumn' bits after n ...
-    cols[d] = bit0 | bit1 | (-1 << n);
-    // The next two lines are done with different algorithms, this somehow
-    // improves performance a bit...
-    diagl[d] = (bit0 << 2) | (bit1 << 1);
-    diagr[d] = (bit0 >> 2) | (bit1 >> 1);
+  for (uint_fast16_t cnt = 0; cnt < start_cnt; cnt+= P_FACT) {
+    uint_fast32_t cols[MAXN][P_FACT], posibs[MAXN][P_FACT]; // Our backtracking 'stack'
+    uint_fast32_t diagl[MAXN][P_FACT], diagr[MAXN][P_FACT];
+    int_fast16_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
 
     //  The variable posib contains the bitmask of possibilities we still have
     //  to try in a given row ...
-    uint_fast32_t posib = ~(cols[d] | diagl[d] | diagr[d]);
+    uint_fast32_t posib[P_FACT];
 
-    while (d >= 0) {
-      // moving the two shifts out of the inner loop slightly improves
-      // performance
-      uint_fast32_t diagl_shifted = diagl[d] << 1;
-      uint_fast32_t diagr_shifted = diagr[d] >> 1;
-      while (posib) {
-        // The standard trick for getting the rightmost bit in the mask
-        uint_fast32_t bit = posib & (~posib + 1);
-        uint_fast32_t new_cols = cols[d] | bit;
-        uint_fast32_t new_diagl = (bit << 1) | diagl_shifted;
-        uint_fast32_t new_diagr = (bit >> 1) | diagr_shifted;
-        uint_fast32_t new_posib = ~(new_cols | new_diagl | new_diagr);
-        posib ^= bit; // Eliminate the tried possibility.
+    // initialization loop
+    // should be 100% vectorised
+    for(uint_fast8_t p = 0; p < P_FACT; p++) {
+        if(cnt + p < start_cnt)
+        {
+            uint_fast32_t bit0 = 1 << start_queens[cnt + p][0]; // The first queen placed
+            uint_fast32_t bit1 = 1 << start_queens[cnt + p][1]; // The second queen placed
+            cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
+            // The next two lines are done with different algorithms, this somehow
+            // improves performance a bit...
+            diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
+            diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
 
-        if (new_posib) {
-          // The next two lines save stack depth + backtrack operations
-          // when we passed the last possibility in a row.
-          d += posib != 0; // avoid branching with this trick
-          // Go lower in the stack, avoid branching by writing above the current
-          // position
-          posibs[posib ? d : d + 1] = posib;
-
-          // make values current
-          posib = new_posib;
-          cols[d] = new_cols;
-          diagl[d] = new_diagl;
-          diagr[d] = new_diagr;
-
-          diagl_shifted = new_diagl << 1;
-          diagr_shifted = new_diagr >> 1;
-        } else {
-          // when all columns are used, we found a solution
-          num += new_cols == -1;
+            posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
         }
-      }
-      posib = posibs[d--]; // backtrack ...
+        else
+        {
+            d[p] = -1;
+        }
+    }
+
+    for(uint_fast8_t p = 0; p < P_FACT; p++)
+    {
+        while (d[p] >= 0) {
+          // moving the two shifts out of the inner loop slightly improves
+          // performance
+          uint_fast32_t diagl_shifted = diagl[d[p]][p] << 1;
+          uint_fast32_t diagr_shifted = diagr[d[p]][p] >> 1;
+          while (posib[p]) {
+            // The standard trick for getting the rightmost bit in the mask
+            uint_fast32_t bit = posib[p] & (~posib[p] + 1);
+            uint_fast32_t new_cols = cols[d[p]][p] | bit;
+            uint_fast32_t new_diagl = (bit << 1) | diagl_shifted;
+            uint_fast32_t new_diagr = (bit >> 1) | diagr_shifted;
+            uint_fast32_t new_posib = ~(new_cols | new_diagl | new_diagr);
+            posib[p] ^= bit; // Eliminate the tried possibility.
+
+            if (new_posib) {
+              // The next two lines save stack depth + backtrack operations
+              // when we passed the last possibility in a row.
+              d[p] += posib[p] != 0; // avoid branching with this trick
+              // Go lower in the stack, avoid branching by writing above the current
+              // position
+              posibs[posib[p] ? d[p] : d[p] + 1][p] = posib[p];
+
+              // make values current
+              posib[p] = new_posib;
+              cols[d[p]][p] = new_cols;
+              diagl[d[p]][p] = new_diagl;
+              diagr[d[p]][p] = new_diagr;
+
+              diagl_shifted = new_diagl << 1;
+              diagr_shifted = new_diagr >> 1;
+            } else {
+              // when all columns are used, we found a solution
+              num += new_cols == UINT_FAST32_MAX;
+            }
+          }
+          posib[p] = posibs[d[p]--][p]; // backtrack ...
+        }
     }
   }
   return num * 2;
@@ -153,7 +176,7 @@ int main(int argc, char **argv) {
   for (; i <= N; i++) {
     double time_diff, time_start; // for measuring calculation time
     time_start = get_time();
-    uint64_t result = nqueens(i);
+    uint64_t result = nqueens((uint8_t)i);
     time_diff = (get_time() - time_start); // calculating time difference
     result == results[i - 1] ? printf("PASS ") : printf("FAIL ");
     printf("N %2d, Solutions %18" PRIu64 ", Expected %18" PRIu64
