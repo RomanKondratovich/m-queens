@@ -9,7 +9,7 @@
 //#define TESTSUITE
 
 #ifndef N
-#define N 7
+#define N 5
 #endif
 #define MAXN 29
 
@@ -27,6 +27,7 @@ double get_time() {
   gettimeofday(&tp, NULL);
   return tp.tv_sec + tp.tv_usec / 1000000.0;
 }
+
 
 uint64_t nqueens(uint_fast8_t n) {
 
@@ -86,6 +87,69 @@ uint64_t nqueens(uint_fast8_t n) {
         }
     }
 
+    int work = 1;
+    int active[4] = {1,1,1,1};
+    int ret_d[4] = {0};
+
+    while(work) {
+        for(uint_fast8_t p = 0; p < P_FACT; p++) {
+            if(!posib[p]) {
+                ret_d[p] = -1;
+            }
+        }
+
+        uint_fast32_t diagl_shifted[P_FACT];
+        uint_fast32_t diagr_shifted[P_FACT];
+        uint_fast32_t bit[P_FACT];
+        uint_fast32_t new_cols[P_FACT];
+        uint_fast32_t new_diagl[P_FACT];
+        uint_fast32_t new_diagr[P_FACT];
+        uint_fast32_t new_posib[P_FACT];
+
+        for(uint_fast8_t p = 0; p < P_FACT; p++) {
+            diagl_shifted[p] = diagl[d[p]][p] << 1;
+            diagr_shifted[p] = diagr[d[p]][p] >> 1;
+            bit[p] = posib[p] & (~posib[p] + 1);
+            new_cols[p] = cols[d[p]][p] | bit[p];
+            new_diagl[p] = (bit[p] << 1) | diagl_shifted[p];
+            new_diagr[p] = (bit[p] >> 1) | diagr_shifted[p];
+            new_posib[p] = ~(new_cols[p] | new_diagl[p] | new_diagr[p]);
+            posib[p] ^= bit[p]; // Eliminate the tried possibility.
+        }
+
+        for(uint_fast8_t p = 0; p < P_FACT; p++) {
+            if (d[p] < 0) {
+                active[p] = 0;
+            } else if (ret_d[p] == -1) {
+                d[p]--;
+            } else if (new_posib[p]) {
+              // The next two lines save stack depth + backtrack operations
+              // when we passed the last possibility in a row.
+              d[p] += posib[p] != 0; // avoid branching with this trick
+              // Go lower in the stack, avoid branching by writing above the current
+              // position
+              posibs[posib[p] ? d[p] : d[p] + 1][p] = posib[p];
+
+              // make values current
+              posib[p] = new_posib[p];
+              cols[d[p]][p] = new_cols[p];
+              diagl[d[p]][p] = new_diagl[p];
+              diagr[d[p]][p] = new_diagr[p];
+
+              diagl_shifted[p] = new_diagl[p] << 1;
+              diagr_shifted[p] = new_diagr[p] >> 1;
+            } else {
+              // when all columns are used, we found a solution
+              num += new_cols[p] == UINT_FAST32_MAX;
+            }
+        }
+        if(!(active[0] | active[1] | active[2] | active[3]))
+        {
+            work = 0;
+        }
+    }
+
+/*
     for(uint_fast8_t p = 0; p < P_FACT; p++)
     {
         while (d[p] >= 0) {
@@ -126,7 +190,7 @@ uint64_t nqueens(uint_fast8_t n) {
           }
           posib[p] = posibs[d[p]--][p]; // backtrack ...
         }
-    }
+    }*/
   }
   return num * 2;
 }
