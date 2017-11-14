@@ -10,10 +10,12 @@
 
 #ifndef N
 #define N 5
-#endif
+#define MAXN N
+#else
 #define MAXN 29
+#endif
 
-#if N > MAXN
+#if N > 29
 #warning "N too big, overflow may occur"
 #endif
 
@@ -88,48 +90,48 @@ uint64_t nqueens(uint_fast8_t n) {
     }
 
     int work = 1;
-    int active[4] = {1,1,1,1};
-    int ret_d[4] = {0};
+    int dead[P_FACT] = {0};
+    uint_fast32_t ret_d[P_FACT] = {0};
 
     while(work) {
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            if(!posib[p]) {
-                ret_d[p] = -1;
-            }
+            ret_d[p] = !posib[p];
         }
 
         uint_fast32_t diagl_shifted[P_FACT];
         uint_fast32_t diagr_shifted[P_FACT];
-        uint_fast32_t bit[P_FACT];
         uint_fast32_t new_cols[P_FACT];
         uint_fast32_t new_diagl[P_FACT];
         uint_fast32_t new_diagr[P_FACT];
         uint_fast32_t new_posib[P_FACT];
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
+
             diagl_shifted[p] = diagl[d[p]][p] << 1;
             diagr_shifted[p] = diagr[d[p]][p] >> 1;
-            bit[p] = posib[p] & (~posib[p] + 1);
-            new_cols[p] = cols[d[p]][p] | bit[p];
-            new_diagl[p] = (bit[p] << 1) | diagl_shifted[p];
-            new_diagr[p] = (bit[p] >> 1) | diagr_shifted[p];
+            uint_fast32_t bit = posib[p] & (~posib[p] + 1);
+            new_cols[p] = cols[d[p]][p] | bit;
+            new_diagl[p] = (bit << 1) | diagl_shifted[p];
+            new_diagr[p] = (bit >> 1) | diagr_shifted[p];
             new_posib[p] = ~(new_cols[p] | new_diagl[p] | new_diagr[p]);
-            posib[p] ^= bit[p]; // Eliminate the tried possibility.
+            posib[p] ^= bit; // Eliminate the tried possibility.
         }
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
             if (d[p] < 0) {
-                active[p] = 0;
+                dead[p] = 1;
                 // TODO: insert new computation here
-            } else if (ret_d[p] == -1) {
+            } else if (ret_d[p]) {
+                posib[p] = posibs[d[p]][p];
                 d[p]--;
             } else if (new_posib[p]) {
               // The next two lines save stack depth + backtrack operations
               // when we passed the last possibility in a row.
+              int_fast16_t offs = d[p] + 1;
               d[p] += posib[p] != 0; // avoid branching with this trick
               // Go lower in the stack, avoid branching by writing above the current
               // position
-              posibs[posib[p] ? d[p] : d[p] + 1][p] = posib[p];
+              posibs[offs][p] = posib[p];
 
               // make values current
               posib[p] = new_posib[p];
@@ -144,10 +146,14 @@ uint64_t nqueens(uint_fast8_t n) {
               num += new_cols[p] == UINT_FAST32_MAX;
             }
         }
-        if(!(active[0] | active[1] | active[2] | active[3]))
-        {
-            work = 0;
+
+        // check if one of the slices is not dead
+        for(int p = 0; p < P_FACT; p++) {
+            work &= dead[p];
         }
+
+        // stop if all slices are dead
+        work = !work;
     }
 
 /*
