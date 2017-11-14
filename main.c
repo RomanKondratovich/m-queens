@@ -120,6 +120,7 @@ uint64_t nqueens(uint_fast8_t n) {
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
             if (d[p] < 0) {
                 active[p] = 0;
+                // TODO: insert new computation here
             } else if (ret_d[p] == -1) {
                 d[p]--;
             } else if (new_posib[p]) {
