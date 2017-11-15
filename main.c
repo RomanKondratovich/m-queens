@@ -9,7 +9,7 @@
 //#define TESTSUITE
 
 #ifndef N
-#define N 5
+#define N 8
 #define MAXN N
 #else
 #define MAXN 29
@@ -30,11 +30,26 @@ double get_time() {
   return tp.tv_sec + tp.tv_usec / 1000000.0;
 }
 
+// parallel factor
+#define P_FACT 4
+
+uint_fast32_t diagl_shifted[P_FACT];
+uint_fast32_t diagr_shifted[P_FACT];
+uint_fast32_t old_cols[P_FACT];
+uint_fast32_t new_cols[P_FACT];
+uint_fast32_t new_diagl[P_FACT];
+uint_fast32_t new_diagr[P_FACT];
+uint_fast32_t new_posib[P_FACT];
+uint_fast32_t old_posib[P_FACT];
+//  The variable posib contains the bitmask of possibilities we still have
+//  to try in a given row ...
+uint_fast32_t posib[P_FACT];
+
+uint_fast32_t cols[MAXN][P_FACT], posibs[MAXN][P_FACT]; // Our backtracking 'stack'
+uint_fast32_t diagl[MAXN][P_FACT], diagr[MAXN][P_FACT];
+int_fast16_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
 
 uint64_t nqueens(uint_fast8_t n) {
-
-  // parallel factor
-  #define P_FACT 4
 
   // counter for the number of solutions
   // sufficient until n=29
@@ -60,17 +75,12 @@ uint64_t nqueens(uint_fast8_t n) {
 
 #pragma omp parallel for reduction(+ : num) schedule(dynamic)
   for (uint_fast16_t cnt = 0; cnt < start_cnt; cnt+= P_FACT) {
-    uint_fast32_t cols[MAXN][P_FACT], posibs[MAXN][P_FACT]; // Our backtracking 'stack'
-    uint_fast32_t diagl[MAXN][P_FACT], diagr[MAXN][P_FACT];
-    int_fast16_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
 
-    //  The variable posib contains the bitmask of possibilities we still have
-    //  to try in a given row ...
-    uint_fast32_t posib[P_FACT];
 
     // initialization loop
     // should be 100% vectorised
     for(uint_fast8_t p = 0; p < P_FACT; p++) {
+        d[p] = 0;
         if(cnt + p < start_cnt)
         {
             uint_fast32_t bit0 = 1 << start_queens[cnt + p][0]; // The first queen placed
@@ -85,32 +95,24 @@ uint64_t nqueens(uint_fast8_t n) {
         }
         else
         {
-            d[p] = -1;
+            posib[p] = 0;
         }
     }
 
     int work = 1;
     int dead[P_FACT] = {0};
-    uint_fast32_t ret_d[P_FACT] = {0};
 
     while(work) {
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            ret_d[p] = !posib[p];
-        }
-
-        uint_fast32_t diagl_shifted[P_FACT];
-        uint_fast32_t diagr_shifted[P_FACT];
-        uint_fast32_t new_cols[P_FACT];
-        uint_fast32_t new_diagl[P_FACT];
-        uint_fast32_t new_diagr[P_FACT];
-        uint_fast32_t new_posib[P_FACT];
-
-        for(uint_fast8_t p = 0; p < P_FACT; p++) {
-
             diagl_shifted[p] = diagl[d[p]][p] << 1;
             diagr_shifted[p] = diagr[d[p]][p] >> 1;
+            old_cols[p] = cols[d[p]][p];
+        }
+
+        for(uint_fast8_t p = 0; p < P_FACT; p++) {
+            old_posib[p] = posib[p];
             uint_fast32_t bit = posib[p] & (~posib[p] + 1);
-            new_cols[p] = cols[d[p]][p] | bit;
+            new_cols[p] = old_cols[p] | bit;
             new_diagl[p] = (bit << 1) | diagl_shifted[p];
             new_diagr[p] = (bit >> 1) | diagr_shifted[p];
             new_posib[p] = ~(new_cols[p] | new_diagl[p] | new_diagr[p]);
@@ -118,20 +120,24 @@ uint64_t nqueens(uint_fast8_t n) {
         }
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            if (d[p] < 0) {
-                dead[p] = 1;
-                // TODO: insert new computation here
-            } else if (ret_d[p]) {
+
+            if (!old_posib[p]) {
                 posib[p] = posibs[d[p]][p];
                 d[p]--;
+                if (d[p] < 0) {
+                    dead[p] = 1;
+                    d[p] = 0;
+                    posib[p] = 0;
+                    // TODO: insert new computation here
+                }
             } else if (new_posib[p]) {
-              // The next two lines save stack depth + backtrack operations
-              // when we passed the last possibility in a row.
-              int_fast16_t offs = d[p] + 1;
-              d[p] += posib[p] != 0; // avoid branching with this trick
               // Go lower in the stack, avoid branching by writing above the current
               // position
-              posibs[offs][p] = posib[p];
+              posibs[d[p] + 1][p] = posib[p];
+
+              // The next two lines save stack depth + backtrack operations
+              // when we passed the last possibility in a row.
+              d[p] += posib[p] != 0; // avoid branching with this trick
 
               // make values current
               posib[p] = new_posib[p];
