@@ -172,49 +172,6 @@ uint64_t nqueens(uint_fast8_t n) {
         // stop if all slices are dead
         work = !work;
     }
-
-/*
-    for(uint_fast8_t p = 0; p < P_FACT; p++)
-    {
-        while (d[p] >= 0) {
-          // moving the two shifts out of the inner loop slightly improves
-          // performance
-          uint_fast32_t diagl_shifted = diagl[d[p]][p] << 1;
-          uint_fast32_t diagr_shifted = diagr[d[p]][p] >> 1;
-          while (posib[p]) {
-            // The standard trick for getting the rightmost bit in the mask
-            uint_fast32_t bit = posib[p] & (~posib[p] + 1);
-            uint_fast32_t new_cols = cols[d[p]][p] | bit;
-            uint_fast32_t new_diagl = (bit << 1) | diagl_shifted;
-            uint_fast32_t new_diagr = (bit >> 1) | diagr_shifted;
-            uint_fast32_t new_posib = ~(new_cols | new_diagl | new_diagr);
-            posib[p] ^= bit; // Eliminate the tried possibility.
-
-            if (new_posib) {
-              // The next two lines save stack depth + backtrack operations
-              // when we passed the last possibility in a row.
-              int_fast16_t offs = d[p] + 1;
-              d[p] += posib[p] != 0; // avoid branching with this trick
-              // Go lower in the stack, avoid branching by writing above the current
-              // position
-              posibs[offs][p] = posib[p];
-
-              // make values current
-              posib[p] = new_posib;
-              cols[d[p]][p] = new_cols;
-              diagl[d[p]][p] = new_diagl;
-              diagr[d[p]][p] = new_diagr;
-
-              diagl_shifted = new_diagl << 1;
-              diagr_shifted = new_diagr >> 1;
-            } else {
-              // when all columns are used, we found a solution
-              num += new_cols == UINT_FAST32_MAX;
-            }
-          }
-          posib[p] = posibs[d[p]--][p]; // backtrack ...
-        }
-    }*/
   }
   return num * 2;
 }
