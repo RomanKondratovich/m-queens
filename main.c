@@ -6,10 +6,10 @@
 #include <time.h>
 
 // uncomment to start with n=2 and compare to known results
-//#define TESTSUITE
+#define TESTSUITE
 
 #ifndef N
-#define N 8
+#define N 15
 #define MAXN N
 #else
 #define MAXN 29
@@ -31,7 +31,7 @@ double get_time() {
 }
 
 // parallel factor
-#define P_FACT 4
+#define P_FACT 8
 
 uint_fast32_t diagl_shifted[P_FACT];
 uint_fast32_t diagr_shifted[P_FACT];
@@ -73,10 +73,8 @@ uint64_t nqueens(uint_fast8_t n) {
   }
 
 
-#pragma omp parallel for reduction(+ : num) schedule(dynamic)
-  for (uint_fast16_t cnt = 0; cnt < start_cnt; cnt+= P_FACT) {
-
-
+//#pragma omp parallel for reduction(+ : num) schedule(dynamic)
+  for (uint_fast16_t cnt = 0; cnt < start_cnt; ) {
     // initialization loop
     // should be 100% vectorised
     for(uint_fast8_t p = 0; p < P_FACT; p++) {
@@ -98,6 +96,7 @@ uint64_t nqueens(uint_fast8_t n) {
             posib[p] = 0;
         }
     }
+    cnt += P_FACT;
 
     int work = 1;
     int dead[P_FACT] = {0};
@@ -111,7 +110,7 @@ uint64_t nqueens(uint_fast8_t n) {
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
             old_posib[p] = posib[p];
-            uint_fast32_t bit = posib[p] & (~posib[p] + 1);
+            uint_fast32_t bit = posib[p] & (~posib[p] + (uint_fast32_t)1);
             new_cols[p] = old_cols[p] | bit;
             new_diagl[p] = (bit << 1) | diagl_shifted[p];
             new_diagr[p] = (bit >> 1) | diagr_shifted[p];
@@ -125,10 +124,22 @@ uint64_t nqueens(uint_fast8_t n) {
                 posib[p] = posibs[d[p]][p];
                 d[p]--;
                 if (d[p] < 0) {
-                    dead[p] = 1;
                     d[p] = 0;
-                    posib[p] = 0;
-                    // TODO: insert new computation here
+                    if(cnt < start_cnt) {
+                      uint_fast32_t bit0 = 1 << start_queens[cnt][0]; // The first queen placed
+                      uint_fast32_t bit1 = 1 << start_queens[cnt][1]; // The second queen placed
+                      cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
+                        // The next two lines are done with different algorithms, this somehow
+                        // improves performance a bit...
+                        diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
+                        diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
+
+                        posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
+                        cnt++;
+                    } else {
+                        posib[p] = 0;
+                        dead[p] = 1;
+                    }
                 }
             } else if (new_posib[p]) {
               // Go lower in the stack, avoid branching by writing above the current
