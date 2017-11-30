@@ -6,7 +6,7 @@
 #include <time.h>
 
 // uncomment to start with n=2 and compare to known results
-#define TESTSUITE
+//#define TESTSUITE
 
 #ifndef N
 #define N 15
@@ -31,7 +31,7 @@ double get_time() {
 }
 
 // parallel factor
-#define P_FACT 8
+#define P_FACT 4
 
 uint_fast32_t diagl_shifted[P_FACT];
 uint_fast32_t diagr_shifted[P_FACT];
@@ -63,11 +63,11 @@ uint64_t nqueens(uint_fast8_t n) {
   // ensure start_queens is a multiple of P_FACT
   uint_fast16_t array_size = num_starts + P_FACT - (num_starts % P_FACT);
   uint_fast16_t start_cnt = 0;
-  uint_fast8_t start_queens[array_size][2];
+  uint_fast32_t start_queens[array_size][2];
   for (uint_fast8_t q0 = 0; q0 < n - 2; q0++) {
     for (uint_fast8_t q1 = q0 + 2; q1 < n; q1++) {
-      start_queens[start_cnt][0] = q0;
-      start_queens[start_cnt][1] = q1;
+      start_queens[start_cnt][0] = 1 << q0;
+      start_queens[start_cnt][1] = 1 << q1;
       start_cnt++;
     }
   }
@@ -79,16 +79,16 @@ uint64_t nqueens(uint_fast8_t n) {
     // should be 100% vectorised
     for(uint_fast8_t p = 0; p < P_FACT; p++) {
         d[p] = 0;
+        uint_fast32_t bit0 = start_queens[cnt + p][0]; // The first queen placed
+        uint_fast32_t bit1 = start_queens[cnt + p][1]; // The second queen placed
+        cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
+        // The next two lines are done with different algorithms, this somehow
+        // improves performance a bit...
+        diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
+        diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
+
         if(cnt + p < start_cnt)
         {
-            uint_fast32_t bit0 = 1 << start_queens[cnt + p][0]; // The first queen placed
-            uint_fast32_t bit1 = 1 << start_queens[cnt + p][1]; // The second queen placed
-            cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
-            // The next two lines are done with different algorithms, this somehow
-            // improves performance a bit...
-            diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
-            diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
-
             posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
         }
         else
@@ -121,25 +121,24 @@ uint64_t nqueens(uint_fast8_t n) {
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
 
             if (!old_posib[p]) {
-                posib[p] = posibs[d[p]][p];
-                d[p]--;
-                if (d[p] < 0) {
-                    d[p] = 0;
+                if (d[p] == 0) {
                     if(cnt < start_cnt) {
-                      uint_fast32_t bit0 = 1 << start_queens[cnt][0]; // The first queen placed
-                      uint_fast32_t bit1 = 1 << start_queens[cnt][1]; // The second queen placed
-                      cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
+                        uint_fast32_t bit0 = start_queens[cnt][0]; // The first queen placed
+                        uint_fast32_t bit1 = start_queens[cnt][1]; // The second queen placed
+                        cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
                         // The next two lines are done with different algorithms, this somehow
                         // improves performance a bit...
                         diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
                         diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
-
                         posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
                         cnt++;
                     } else {
                         posib[p] = 0;
                         dead[p] = 1;
                     }
+                } else {
+                    posib[p] = posibs[d[p]][p];
+                    d[p]--;
                 }
             } else if (new_posib[p]) {
               // Go lower in the stack, avoid branching by writing above the current
