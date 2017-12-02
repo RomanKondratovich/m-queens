@@ -15,6 +15,12 @@
 #define MAXN 29
 #endif
 
+
+// parallel factor
+#ifndef P_FACT
+#define P_FACT 4
+#endif
+
 #if N > 29
 #warning "N too big, overflow may occur"
 #endif
@@ -30,8 +36,6 @@ double get_time() {
   return tp.tv_sec + tp.tv_usec / 1000000.0;
 }
 
-// parallel factor
-#define P_FACT 4
 
 uint_fast32_t diagl_shifted[P_FACT];
 uint_fast32_t diagr_shifted[P_FACT];
@@ -108,8 +112,9 @@ uint64_t nqueens(uint_fast8_t n) {
             old_cols[p] = cols[d[p]][p];
         }
 
+        #pragma omp simd
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            old_posib[p] = posib[p];
+            old_posib[p] = !posib[p];
             uint_fast32_t bit = posib[p] & (~posib[p] + (uint_fast32_t)1);
             new_cols[p] = old_cols[p] | bit;
             new_diagl[p] = (bit << 1) | diagl_shifted[p];
@@ -120,25 +125,23 @@ uint64_t nqueens(uint_fast8_t n) {
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
 
-            if (!old_posib[p]) {
-                if (d[p] == 0) {
-                    if(cnt < start_cnt) {
-                        uint_fast32_t bit0 = start_queens[cnt][0]; // The first queen placed
-                        uint_fast32_t bit1 = start_queens[cnt][1]; // The second queen placed
-                        cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
-                        // The next two lines are done with different algorithms, this somehow
-                        // improves performance a bit...
-                        diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
-                        diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
-                        posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
-                        cnt++;
-                    } else {
-                        posib[p] = 0;
-                        dead[p] = 1;
-                    }
+            if (old_posib[p] && d[p]) {
+                posib[p] = posibs[d[p]][p];
+                d[p]--;
+            } else if (old_posib[p]) {
+                if(cnt < start_cnt) {
+                    uint_fast32_t bit0 = start_queens[cnt][0]; // The first queen placed
+                    uint_fast32_t bit1 = start_queens[cnt][1]; // The second queen placed
+                    cols[d[p]][p] = bit0 | bit1 | (UINT_FAST32_MAX << n);
+                    // The next two lines are done with different algorithms, this somehow
+                    // improves performance a bit...
+                    diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
+                    diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
+                    posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
+                    cnt++;
                 } else {
-                    posib[p] = posibs[d[p]][p];
-                    d[p]--;
+                    posib[p] = 0;
+                    dead[p] = 1;
                 }
             } else if (new_posib[p]) {
               // Go lower in the stack, avoid branching by writing above the current
