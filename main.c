@@ -18,7 +18,7 @@
 
 // parallel factor
 #ifndef P_FACT
-#define P_FACT 4
+#define P_FACT 1
 #endif
 
 #if N > 29
@@ -44,14 +44,14 @@ uint_fast32_t new_cols[P_FACT];
 uint_fast32_t new_diagl[P_FACT];
 uint_fast32_t new_diagr[P_FACT];
 uint_fast32_t new_posib[P_FACT];
-uint_fast32_t old_posib[P_FACT];
 //  The variable posib contains the bitmask of possibilities we still have
 //  to try in a given row ...
 uint_fast32_t posib[P_FACT];
 
 uint_fast32_t cols[MAXN][P_FACT], posibs[MAXN][P_FACT]; // Our backtracking 'stack'
 uint_fast32_t diagl[MAXN][P_FACT], diagr[MAXN][P_FACT];
-int_fast16_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
+int_fast8_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
+int_fast32_t old_posib[P_FACT];
 
 uint64_t nqueens(uint_fast8_t n) {
 
@@ -90,6 +90,9 @@ uint64_t nqueens(uint_fast8_t n) {
         // improves performance a bit...
         diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
         diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
+        diagl_shifted[p] = diagl[d[p]][p] << 1;
+        diagr_shifted[p] = diagr[d[p]][p] >> 1;
+        old_cols[p] = cols[d[p]][p];
 
         if(cnt + p < start_cnt)
         {
@@ -98,23 +101,16 @@ uint64_t nqueens(uint_fast8_t n) {
         else
         {
             posib[p] = 0;
+            d[p] = 0;
         }
     }
     cnt += P_FACT;
 
-    int work = 1;
-    int dead[P_FACT] = {0};
-
+    int_fast32_t work = P_FACT;
     while(work) {
+        #pragma omp simd reduction(+:num)
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            diagl_shifted[p] = diagl[d[p]][p] << 1;
-            diagr_shifted[p] = diagr[d[p]][p] >> 1;
-            old_cols[p] = cols[d[p]][p];
-        }
-
-        #pragma omp simd
-        for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            old_posib[p] = !posib[p];
+            old_posib[p] = !posib[p]; //? 0 : UINT_FAST8_MAX;
             uint_fast32_t bit = posib[p] & (~posib[p] + (uint_fast32_t)1);
             new_cols[p] = old_cols[p] | bit;
             new_diagl[p] = (bit << 1) | diagl_shifted[p];
@@ -124,10 +120,12 @@ uint64_t nqueens(uint_fast8_t n) {
         }
 
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
-
-            if (old_posib[p] && d[p]) {
+            if (old_posib[p] && (d[p] > 0)) {
                 posib[p] = posibs[d[p]][p];
                 d[p]--;
+                diagl_shifted[p] = diagl[d[p]][p] << 1;
+                diagr_shifted[p] = diagr[d[p]][p] >> 1;
+                old_cols[p] = cols[d[p]][p];
             } else if (old_posib[p]) {
                 if(cnt < start_cnt) {
                     uint_fast32_t bit0 = start_queens[cnt][0]; // The first queen placed
@@ -138,10 +136,15 @@ uint64_t nqueens(uint_fast8_t n) {
                     diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
                     diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
                     posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
+                    diagl_shifted[p] = diagl[d[p]][p] << 1;
+                    diagr_shifted[p] = diagr[d[p]][p] >> 1;
+                    old_cols[p] = cols[d[p]][p];
                     cnt++;
+                } else if(d[p] < 0){
                 } else {
                     posib[p] = 0;
-                    dead[p] = 1;
+                    d[p] = -1;
+                    work--;
                 }
             } else if (new_posib[p]) {
               // Go lower in the stack, avoid branching by writing above the current
@@ -160,19 +163,12 @@ uint64_t nqueens(uint_fast8_t n) {
 
               diagl_shifted[p] = new_diagl[p] << 1;
               diagr_shifted[p] = new_diagr[p] >> 1;
+              old_cols[p] = cols[d[p]][p];
             } else {
-              // when all columns are used, we found a solution
-              num += new_cols[p] == UINT_FAST32_MAX;
+                // when all columns are used, we found a solution
+                num += new_cols[p] == UINT_FAST32_MAX;
             }
         }
-
-        // check if one of the slices is not dead
-        for(int p = 0; p < P_FACT; p++) {
-            work &= dead[p];
-        }
-
-        // stop if all slices are dead
-        work = !work;
     }
   }
   return num * 2;
