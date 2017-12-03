@@ -18,7 +18,7 @@
 
 // parallel factor
 #ifndef P_FACT
-#define P_FACT 1
+#define P_FACT 4
 #endif
 
 #if N > 29
@@ -106,7 +106,8 @@ uint64_t nqueens(uint_fast8_t n) {
     }
     cnt += P_FACT;
 
-    int_fast32_t work = P_FACT;
+    uint_fast8_t work = P_FACT;
+    uint_fast32_t dead = 0;
     while(work) {
         #pragma omp simd reduction(+:num)
         for(uint_fast8_t p = 0; p < P_FACT; p++) {
@@ -119,7 +120,7 @@ uint64_t nqueens(uint_fast8_t n) {
             posib[p] ^= bit; // Eliminate the tried possibility.
         }
 
-        for(uint_fast8_t p = 0; p < P_FACT; p++) {
+        for(uint_fast8_t p = dead; p < P_FACT; p++) {
             if (old_posib[p] && (d[p] > 0)) {
                 posib[p] = posibs[d[p]][p];
                 d[p]--;
@@ -140,10 +141,21 @@ uint64_t nqueens(uint_fast8_t n) {
                     diagr_shifted[p] = diagr[d[p]][p] >> 1;
                     old_cols[p] = cols[d[p]][p];
                     cnt++;
-                } else if(d[p] < 0){
                 } else {
-                    posib[p] = 0;
-                    d[p] = -1;
+                    #pragma omp simd safelen(MAXN)
+                    for(int i = 0; i < MAXN; i++) {
+                        cols[i][p] = cols[i][dead];
+                        posibs[i][p] = posibs[i][dead];
+                        diagl[i][p] = diagl[i][dead];
+                        diagr[i][p] = diagr[i][dead];
+                    }
+                    d[p] = d[dead];
+                    posib[p] = posib[dead];
+                    new_posib[p] = new_posib[dead];
+                    old_cols[p] = old_cols[dead];
+                    diagl_shifted[p] = diagl_shifted[dead];
+                    diagr_shifted[p] = diagr_shifted[dead];
+                    dead++;
                     work--;
                 }
             } else if (new_posib[p]) {
