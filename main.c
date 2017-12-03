@@ -9,7 +9,7 @@
 //#define TESTSUITE
 
 #ifndef N
-#define N 15
+#define N 5
 #define MAXN N
 #else
 #define MAXN 29
@@ -50,8 +50,9 @@ uint_fast32_t posib[P_FACT];
 
 uint_fast32_t cols[MAXN][P_FACT], posibs[MAXN][P_FACT]; // Our backtracking 'stack'
 uint_fast32_t diagl[MAXN][P_FACT], diagr[MAXN][P_FACT];
-int_fast8_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
+int_fast32_t d[P_FACT] = {0}; // d is our depth in the backtrack stack
 int_fast32_t old_posib[P_FACT];
+uint_fast32_t t[P_FACT];
 
 uint64_t nqueens(uint_fast8_t n) {
 
@@ -109,25 +110,29 @@ uint64_t nqueens(uint_fast8_t n) {
     uint_fast8_t work = P_FACT;
     uint_fast32_t dead = 0;
     while(work) {
-        #pragma omp simd reduction(+:num)
-        for(uint_fast8_t p = 0; p < P_FACT; p++) {
-            old_posib[p] = !posib[p]; //? 0 : UINT_FAST8_MAX;
+        #pragma omp simd safelen(P_FACT)
+        for(uint_fast32_t p = 0; p < P_FACT; p++) {
+            //old_posib[p] = !posib[p]; //? 0 : UINT_FAST8_MAX;
             uint_fast32_t bit = posib[p] & (~posib[p] + (uint_fast32_t)1);
             new_cols[p] = old_cols[p] | bit;
             new_diagl[p] = (bit << 1) | diagl_shifted[p];
             new_diagr[p] = (bit >> 1) | diagr_shifted[p];
             new_posib[p] = ~(new_cols[p] | new_diagl[p] | new_diagr[p]);
+            t[p] = new_cols[p] == UINT_FAST32_MAX;
+            old_posib[p] = t[p] || !posib[p];
             posib[p] ^= bit; // Eliminate the tried possibility.
         }
 
-        for(uint_fast8_t p = dead; p < P_FACT; p++) {
+        for(uint_fast32_t p = dead; p < P_FACT; p++) {
             if (old_posib[p] && (d[p] > 0)) {
-                posib[p] = posibs[d[p]][p];
+                num += t[p];
                 d[p]--;
+                posib[p] = posibs[d[p]][p];
                 diagl_shifted[p] = diagl[d[p]][p] << 1;
                 diagr_shifted[p] = diagr[d[p]][p] >> 1;
                 old_cols[p] = cols[d[p]][p];
             } else if (old_posib[p]) {
+                num += t[p];
                 if(cnt < start_cnt) {
                     uint_fast32_t bit0 = start_queens[cnt][0]; // The first queen placed
                     uint_fast32_t bit1 = start_queens[cnt][1]; // The second queen placed
@@ -137,8 +142,8 @@ uint64_t nqueens(uint_fast8_t n) {
                     diagl[d[p]][p] = (bit0 << 2) | (bit1 << 1);
                     diagr[d[p]][p] = (bit0 >> 2) | (bit1 >> 1);
                     posib[p] = ~(cols[d[p]][p] | diagl[d[p]][p] | diagr[d[p]][p]);
-                    diagl_shifted[p] = diagl[d[p]][p] << 1;
-                    diagr_shifted[p] = diagr[d[p]][p] >> 1;
+                    diagl_shifted[p] = (bit0 << 3) | (bit1 << 2);
+                    diagr_shifted[p] = (bit0 >> 3) | (bit1 >> 2);
                     old_cols[p] = cols[d[p]][p];
                     cnt++;
                 } else {
@@ -151,7 +156,6 @@ uint64_t nqueens(uint_fast8_t n) {
                     }
                     d[p] = d[dead];
                     posib[p] = posib[dead];
-                    new_posib[p] = new_posib[dead];
                     old_cols[p] = old_cols[dead];
                     diagl_shifted[p] = diagl_shifted[dead];
                     diagr_shifted[p] = diagr_shifted[dead];
@@ -161,7 +165,7 @@ uint64_t nqueens(uint_fast8_t n) {
             } else if (new_posib[p]) {
               // Go lower in the stack, avoid branching by writing above the current
               // position
-              posibs[d[p] + 1][p] = posib[p];
+              posibs[d[p]][p] = posib[p];
 
               // The next two lines save stack depth + backtrack operations
               // when we passed the last possibility in a row.
@@ -169,16 +173,13 @@ uint64_t nqueens(uint_fast8_t n) {
 
               // make values current
               posib[p] = new_posib[p];
+              old_cols[p] = new_cols[p];
               cols[d[p]][p] = new_cols[p];
               diagl[d[p]][p] = new_diagl[p];
               diagr[d[p]][p] = new_diagr[p];
 
               diagl_shifted[p] = new_diagl[p] << 1;
               diagr_shifted[p] = new_diagr[p] >> 1;
-              old_cols[p] = cols[d[p]][p];
-            } else {
-                // when all columns are used, we found a solution
-                num += new_cols[p] == UINT_FAST32_MAX;
             }
         }
     }
