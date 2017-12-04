@@ -76,6 +76,8 @@ uint64_t nqueens(uint_fast8_t n) {
       uint_fast32_t diagl_shifted = diagl[d] << 1;
       uint_fast32_t diagr_shifted = diagr[d] >> 1;
       int_fast32_t l_rest = rest[d];
+      uint_fast32_t nallowed_mask = (l_rest - LOOKAHEAD) >> 5;
+
       while (posib) {
         // The standard trick for getting the rightmost bit in the mask
         uint_fast32_t bit = posib & (~posib + 1);
@@ -84,13 +86,13 @@ uint64_t nqueens(uint_fast8_t n) {
         uint_fast32_t new_diagr = (bit >> 1) | diagr_shifted;
         uint_fast32_t new_posib = ~(new_cols | new_diagl | new_diagr);
         posib ^= bit; // Eliminate the tried possibility.
+        uint_fast32_t lookahead = ~(new_cols | (new_diagl << (LOOKAHEAD - 1)) | (new_diagr >> (LOOKAHEAD - 1)));
 
-        if (new_posib) {
-            uint_fast32_t lookahead = ~(new_cols | (new_diagl << (LOOKAHEAD - 1)) | (new_diagr >> (LOOKAHEAD - 1)));
-            uint_fast32_t allowed = l_rest > 0;
+        if (new_posib && (nallowed_mask | lookahead)) {
+            /*
             if(allowed && !lookahead) {
                 continue;
-            }
+            }*/
 
           // The next two lines save stack depth + backtrack operations
           // when we passed the last possibility in a row.
@@ -99,6 +101,7 @@ uint64_t nqueens(uint_fast8_t n) {
           posibs[d + 1] = posib;
           d += posib != 0; // avoid branching with this trick
           l_rest--;
+          nallowed_mask = (l_rest - LOOKAHEAD) >> 5;
 
           // make values current
           posib = new_posib;
