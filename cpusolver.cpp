@@ -41,16 +41,14 @@ bool cpuSolver::init(uint8_t boardsize, uint8_t placed)
     this->boardsize = boardsize;
     this->placed = placed;
     delete this->accel;
-    this->accel = ClAccell::makeClAccell(0,0);
+    //this->accel = ClAccell::makeClAccell(0,0);
 
     return true;
 }
 
-uint64_t cpuSolver::count_solutions(const aligned_vec<diags_packed_t>& solutions, const aligned_vec<diags_packed_t>& candidates) {
+uint64_t cpuSolver::count_solutions(size_t sol_size, const diags_packed_t* __restrict__ sol_data, const aligned_vec<diags_packed_t>& candidates) {
     uint32_t solutions_cnt = 0;
-    const size_t sol_size = solutions.size();
     const size_t can_size = candidates.size();
-    const diags_packed_t* __restrict__ sol_data = solutions.data();
     const diags_packed_t* __restrict__ can_data = candidates.data();
 #if STATS == 1
     stat_cmps += sol_size * can_size;
@@ -61,7 +59,7 @@ uint64_t cpuSolver::count_solutions(const aligned_vec<diags_packed_t>& solutions
         stat_solver_diagl.update(can_data[c_idx].diagl);
         stat_solver_diagr.update(can_data[c_idx].diagr);
 #endif
-#pragma omp simd reduction(+:solutions_cnt) aligned(sol_data, can_data:32)
+#pragma omp simd reduction(+:solutions_cnt) aligned(can_data:32)
         for(size_t s_idx = 0; s_idx < sol_size; s_idx++) {
             solutions_cnt += (sol_data[s_idx].diagr & can_data[c_idx].diagr) == 0 && (sol_data[s_idx].diagl & can_data[c_idx].diagl) == 0;
         }
@@ -71,19 +69,15 @@ uint64_t cpuSolver::count_solutions(const aligned_vec<diags_packed_t>& solutions
 }
 
 __attribute__ ((target_clones("default", "sse2", "sse4.2", "avx2")))
-static uint32_t count_solutions_fixed(size_t batch,
-                                          const aligned_vec<diags_packed_t>& solutions,
+static uint32_t count_solutions_fixed(size_t batch, size_t sol_size, const diags_packed_t* __restrict__ sol_data,
                                           const aligned_vec<diags_packed_t>& candidates) {
-    const size_t sol_size = solutions.size();
-    assert(sol_size % 2 == 0);
-    const diags_packed_t* __restrict__ sol_data = solutions.data();
     const diags_packed_t* __restrict__ can_data = candidates.data();
 
     // prevent overflow in result variable
     assert(sol_size * batch < UINT32_MAX);
     uint32_t solutions_cnt = static_cast<uint32_t>(sol_size * batch);
     for(size_t s_idx = 0; s_idx < sol_size; s_idx++) {
-#pragma omp simd reduction(-:solutions_cnt) aligned(sol_data, can_data: AVX2_alignment)
+#pragma omp simd reduction(-:solutions_cnt) aligned(can_data: AVX2_alignment)
         for(size_t c_idx = 0; c_idx < batch; c_idx++) {
             solutions_cnt -= (sol_data[s_idx].diagr & can_data[c_idx].diagr) || (sol_data[s_idx].diagl & can_data[c_idx].diagl);
         }
@@ -120,7 +114,8 @@ uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem, 
             solutions_cnt += accel_cnt;
 
         } else {
-            solutions_cnt = count_solutions_fixed(max_candidates, lookup_solutions_low_prob[lookup_idx], candidates_vec);
+            const diags_packed_t* sol_start = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
+            solutions_cnt = count_solutions_fixed(max_candidates, low_prob_sizes[lookup_idx], sol_start, candidates_vec);
         }
 #if STATS == 1
         stat_cmps += max_candidates * lookup_solutions_low_prob[lookup_idx].size();
@@ -133,7 +128,8 @@ uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem, 
                 //assert(cpu_cnt == accel_cnt);
                 solutions_cnt += accel_cnt;
             } else {
-                solutions_cnt += count_solutions_fixed(max_candidates, lookup_solutions_high_prob[lookup_idx], candidates_vec);
+                const diags_packed_t* sol_start = flat_lookup_high_prob.data() + lookup_idx * high_prob_stride;
+                solutions_cnt += count_solutions_fixed(max_candidates, high_prob_sizes[lookup_idx], sol_start, candidates_vec);
             }
 #if STATS == 1
             stat_cmps += max_candidates * lookup_solutions_high_prob[lookup_idx].size();
@@ -204,8 +200,6 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
   std::cout << "Column mask: " << std::hex << col_mask << " zeros in mask: " << std::to_string(mask) << std::endl;
 
   lookup_hash.clear();
-  lookup_solutions_low_prob.clear();
-  lookup_solutions_high_prob.clear();
 
   uint8_t lut_depth = lookup_depth(boardsize, placed);
   auto lut_init_time_start = std::chrono::high_resolution_clock::now();
@@ -227,7 +221,7 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
 
   auto accell_init_start = std::chrono::high_resolution_clock::now();
   if(this->accel) {
-      accel->init(lookup_solutions_high_prob, lookup_solutions_low_prob);
+      //accel->init(lookup_solutions_high_prob, lookup_solutions_low_prob);
   }
 
   auto accell_init_end = std::chrono::high_resolution_clock::now();
@@ -257,9 +251,9 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
       lut_t new_lut_high_prob;
       lut_t new_lut_low_prob;
 
-      new_lut_high_prob.reserve(lookup_solutions_low_prob.size());
-      new_lut_low_prob.reserve(lookup_solutions_low_prob.size());
-      for (size_t i = 0; i < lookup_solutions_low_prob.size(); i++) {
+      new_lut_high_prob.reserve(lookup_hash.size());
+      new_lut_low_prob.reserve(lookup_hash.size());
+      for (size_t i = 0; i < lookup_hash.size(); i++) {
           new_lut_high_prob.emplace_back(aligned_vec<diags_packed_t>(max_candidates));
           new_lut_low_prob.emplace_back(aligned_vec<diags_packed_t>(max_candidates));
       }
@@ -370,14 +364,17 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
       for (auto& it : lookup_hash) {
           auto lookup_idx = it.second;
           if(thread_luts_high_prob[t][lookup_idx].size() > 0) {
-              num_lookup += count_solutions(lookup_solutions_low_prob[lookup_idx], thread_luts_high_prob[t][lookup_idx]);
+              const diags_packed_t* sol_start = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
+              num_lookup += count_solutions(low_prob_sizes[lookup_idx], sol_start, thread_luts_high_prob[t][lookup_idx]);
 #if STATS == 1
               stat_high_prob += thread_luts_high_prob[t][lookup_idx].size();
 #endif
           }
           if(thread_luts_low_prob[t][lookup_idx].size() > 0) {
-              num_lookup += count_solutions(lookup_solutions_low_prob[lookup_idx], thread_luts_low_prob[t][lookup_idx]);
-              num_lookup += count_solutions(lookup_solutions_high_prob[lookup_idx], thread_luts_low_prob[t][lookup_idx]);
+              const diags_packed_t* sol_start_low = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
+              const diags_packed_t* sol_start_high = flat_lookup_high_prob.data() + lookup_idx * high_prob_stride;
+              num_lookup += count_solutions(low_prob_sizes[lookup_idx], sol_start_low, thread_luts_low_prob[t][lookup_idx]);
+              num_lookup += count_solutions(high_prob_sizes[lookup_idx], sol_start_high, thread_luts_low_prob[t][lookup_idx]);
           }
       }
   }
@@ -548,73 +545,91 @@ size_t cpuSolver::init_lookup(uint8_t depth, uint32_t skip_mask)
     size_t stat_low_prob_cnt = 0;
     size_t stat_high_prob_zero = 0;
     size_t stat_low_prob_zero = 0;
-    size_t stat_high_prob_max = 0;
-    size_t stat_low_prob_max = 0;
+
 
     // This seems to be a sweetspot, more research on the probabilities needed
     prob_mask = UINT32_C(1) << (depth - 1);
 
+    const size_t lookup_size = lookup_hash.size();
+
+    // prob_mask bits set
+    std::vector<std::vector<diags_packed_t>> high_prob;
+    // prob_mask bits not set
+    std::vector<std::vector<diags_packed_t>> low_prob;
+
+    high_prob.resize(lookup_size);
+    low_prob.resize(lookup_size);
+    constexpr diags_packed_t dummy_element {UINT32_MAX, UINT32_MAX};
+
     // put lookup table prototype in final aligned form
-    for(size_t i = 0; i < lookup_proto.size(); i++) {
+    for(size_t i = 0; i < lookup_size; i++) {
         auto& lookup_vec = lookup_proto[i];
         size_t elemen_cnt = lookup_vec.size();
         stat_max_len = std::max(stat_max_len, elemen_cnt);
         stat_min_len = std::min(stat_min_len, elemen_cnt);
 
-#if 0
-        for(const auto& elem: lookup_vec) {
-            stat_total_probs_l.update(elem.diagl);
-            stat_total_probs_r.update(elem.diagr);
-        }
-
-#endif
-
-        // prob_mask bits set
-        std::vector<diags_packed_t> high_prob;
-        // prob_mask bits not set
-        std::vector<diags_packed_t> low_prob;
-
         for(const auto& diag: lookup_vec) {
             if(diag.diagr & prob_mask) {
-                high_prob.push_back(diag);
+                high_prob[i].push_back(diag);
                 stat_high_prob_cnt++;
             } else {
-                low_prob.push_back(diag);
+                low_prob[i].push_back(diag);
                 stat_low_prob_cnt++;
             }
         }
 
-        stat_high_prob_max = std::max(stat_high_prob_max, high_prob.size());
-        stat_low_prob_max = std::max(stat_low_prob_max, low_prob.size());
+        high_prob_stride = std::max(high_prob_stride, high_prob[i].size());
+        low_prob_stride = std::max(low_prob_stride, low_prob[i].size());
 
-        if(high_prob.size() == 0) {
+        if(high_prob[i].size() == 0) {
             stat_high_prob_zero++;
         }
 
-        if(low_prob.size() == 0) {
+        if(low_prob[i].size() == 0) {
             stat_low_prob_zero++;
         }
-
-        constexpr diags_packed_t dummy_element {UINT32_MAX, UINT32_MAX};
-
-        // check if elements are sufficiently alligned
-        if (high_prob.size() % 2 != 0) {
-            high_prob.push_back(dummy_element);
-        }
-
-        if (low_prob.size() % 2 != 0) {
-            low_prob.push_back(dummy_element);
-        }
-
-        // put in final lookup table
-        aligned_vec<diags_packed_t> new_vec_single(low_prob.size(), low_prob.size());
-        std::memcpy(new_vec_single.data(), low_prob.data(), low_prob.size() * sizeof (diags_packed_t));
-        lookup_solutions_low_prob.push_back(std::move(new_vec_single));
-
-        aligned_vec<diags_packed_t> new_vec_high_prob(high_prob.size(), high_prob.size());
-        std::memcpy(new_vec_high_prob.data(), high_prob.data(), high_prob.size() * sizeof (diags_packed_t));
-        lookup_solutions_high_prob.push_back(std::move(new_vec_high_prob));
     }
+
+    lookup_proto.clear();
+
+    const size_t high_prob_flat_size = high_prob_stride * lookup_size;
+    const size_t low_prob_flat_size = low_prob_stride * lookup_size;
+
+    std::cout << "Low Prob memory: " << std::to_string(low_prob_flat_size * sizeof (diags_packed_t) / 1024) << "KB" << std::endl;
+    std::cout << "High Prob memory: " << std::to_string(high_prob_flat_size * sizeof (diags_packed_t) / 1024) << "KB" << std::endl;
+
+    high_prob_sizes.resize(lookup_size);
+    low_prob_sizes.resize(lookup_size);
+
+    flat_lookup_high_prob.resize(high_prob_flat_size);
+    for(size_t i = 0; i < lookup_size; i++) {
+        high_prob_sizes[i] = high_prob[i].size();
+        size_t j = 0;
+        const size_t out_offset = i * high_prob_stride;
+        for(; j < high_prob[i].size(); j++) {
+            flat_lookup_high_prob[j + out_offset] = high_prob[i][j];
+        }
+
+        for(; j < high_prob_stride; j++) {
+            flat_lookup_high_prob[j + out_offset] = dummy_element;
+        }
+    }
+    high_prob.clear();
+
+    flat_lookup_low_prob.resize(low_prob_flat_size);
+    for(size_t i = 0; i < lookup_size; i++) {
+        low_prob_sizes[i] = low_prob[i].size();
+        size_t j = 0;
+        const size_t out_offset = i * low_prob_stride;
+        for(; j < low_prob[i].size(); j++) {
+            flat_lookup_low_prob[j + out_offset] = low_prob[i][j];
+        }
+
+        for(; j < low_prob_stride; j++) {
+            flat_lookup_low_prob[j + out_offset] = dummy_element;
+        }
+    }
+    low_prob.clear();
 
     auto probs_l = stat_total_probs_l.get_probablities();
     auto probs_r = stat_total_probs_r.get_probablities();
@@ -636,8 +651,8 @@ size_t cpuSolver::init_lookup(uint8_t depth, uint32_t skip_mask)
     std::cout << "High/Low prob ratio: " << std::to_string(stat_high_prob_cnt/static_cast<float>(stat_low_prob_cnt)) << std::endl;
     std::cout << "High Prob Zero: " << std::to_string(stat_high_prob_zero) << std::endl;
     std::cout << "Low Prob Zero: " << std::to_string(stat_low_prob_zero) << std::endl;
-    std::cout << "High Prob Max: " << std::to_string(stat_high_prob_max) << std::endl;
-    std::cout << "Low Prob Max: " << std::to_string(stat_low_prob_max) << std::endl;
+    std::cout << "High Prob Max: " << std::to_string(high_prob_stride) << std::endl;
+    std::cout << "Low Prob Max: " << std::to_string(low_prob_stride) << std::endl;
 
     return lookup_hash.size();
 }

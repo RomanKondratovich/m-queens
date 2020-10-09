@@ -122,7 +122,7 @@ public:
     uint64_t solve_subboard(const std::vector<start_condition_t>& starts);
     size_t init_lookup(uint8_t depth, uint32_t skip_mask);
     using lut_t = std::vector<aligned_vec<diags_packed_t>>;
-    static constexpr size_t max_candidates = 1024*16;
+    static constexpr size_t max_candidates = 1024;
 
 
 private:
@@ -141,17 +141,27 @@ private:
 
     // maps column patterns to index in lookup_solutions;
     phmap::flat_hash_map<uint32_t, uint32_t> lookup_hash;
+
     // store solutions, this is constant after initializing the lookup table
     // elements in lookup_solutions_low_prob don't have all bits of lookup_prob_mask set
-    lut_t lookup_solutions_low_prob;
+    std::vector<diags_packed_t> flat_lookup_low_prob;
     // elements here have all bits of lookup_prob_mask set
-    lut_t lookup_solutions_high_prob;
+    std::vector<diags_packed_t> flat_lookup_high_prob;
+
+    // sizes for flat lookup tables
+    std::vector<uint32_t> low_prob_sizes;
+    std::vector<uint32_t> high_prob_sizes;
+
+    // strides for flat lookup tables
+    size_t high_prob_stride = 0;
+    size_t low_prob_stride = 0;
+
     uint32_t prob_mask;
 
     ClAccell* accel = nullptr;
 
     uint64_t get_solution_cnt(uint32_t cols, diags_packed_t search_elem, lut_t &lookup_candidates_high_prob, lut_t &lookup_candidates_low_prob);
-    uint64_t count_solutions(const aligned_vec<diags_packed_t> &solutions, const aligned_vec<diags_packed_t> &candidates);
+    uint64_t count_solutions(size_t sol_size, const diags_packed_t* __restrict__ sol_data, const aligned_vec<diags_packed_t>& candidates);
     uint8_t lookup_depth(uint8_t boardsize, uint8_t placed);
     __uint128_t factorial(uint8_t n);
     bool is_perfect_lut(uint8_t lut_depth, uint8_t free_bits, uint64_t entries);
