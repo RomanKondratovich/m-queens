@@ -122,7 +122,7 @@ public:
     uint64_t solve_subboard(const std::vector<start_condition_t>& starts);
     size_t init_lookup(uint8_t depth, uint32_t skip_mask);
     using lut_t = std::vector<aligned_vec<diags_packed_t>>;
-    static constexpr size_t max_candidates = 1024;
+    static constexpr size_t max_candidates = 1024*16;
 
 
 private:
@@ -156,12 +156,20 @@ private:
     size_t high_prob_stride = 0;
     size_t low_prob_stride = 0;
 
+    // store candidates
+    std::vector<diags_packed_t> flat_cand_low_prob;
+    std::vector<diags_packed_t> flat_cand_high_prob;
+
+    // sizes for flat candidates tables
+    std::vector<std::atomic<uint32_t>> low_cand_sizes;
+    std::vector<std::atomic<uint32_t>> high_cand_sizes;
+
     uint32_t prob_mask;
 
     ClAccell* accel = nullptr;
 
-    uint64_t get_solution_cnt(uint32_t cols, diags_packed_t search_elem, lut_t &lookup_candidates_high_prob, lut_t &lookup_candidates_low_prob);
-    uint64_t count_solutions(size_t sol_size, const diags_packed_t* __restrict__ sol_data, const aligned_vec<diags_packed_t>& candidates);
+    uint64_t get_solution_cnt(uint32_t cols, diags_packed_t search_elem);
+    uint64_t count_solutions(size_t sol_size, size_t can_size, const diags_packed_t* __restrict__ sol_data, const diags_packed_t* __restrict__ can_data);
     uint8_t lookup_depth(uint8_t boardsize, uint8_t placed);
     __uint128_t factorial(uint8_t n);
     bool is_perfect_lut(uint8_t lut_depth, uint8_t free_bits, uint64_t entries);

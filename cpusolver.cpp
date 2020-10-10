@@ -1,4 +1,5 @@
 #include "cpusolver.h"
+#include <atomic>
 #include <iostream>
 #include <cassert>
 #include <chrono>
@@ -46,10 +47,8 @@ bool cpuSolver::init(uint8_t boardsize, uint8_t placed)
     return true;
 }
 
-uint64_t cpuSolver::count_solutions(size_t sol_size, const diags_packed_t* __restrict__ sol_data, const aligned_vec<diags_packed_t>& candidates) {
+uint64_t cpuSolver::count_solutions(size_t sol_size, size_t can_size, const diags_packed_t* __restrict__ sol_data, const diags_packed_t* __restrict__ can_data) {
     uint32_t solutions_cnt = 0;
-    const size_t can_size = candidates.size();
-    const diags_packed_t* __restrict__ can_data = candidates.data();
 #if STATS == 1
     stat_cmps += sol_size * can_size;
 #endif
@@ -59,7 +58,7 @@ uint64_t cpuSolver::count_solutions(size_t sol_size, const diags_packed_t* __res
         stat_solver_diagl.update(can_data[c_idx].diagl);
         stat_solver_diagr.update(can_data[c_idx].diagr);
 #endif
-#pragma omp simd reduction(+:solutions_cnt) aligned(can_data:32)
+#pragma omp simd reduction(+:solutions_cnt)
         for(size_t s_idx = 0; s_idx < sol_size; s_idx++) {
             solutions_cnt += (sol_data[s_idx].diagr & can_data[c_idx].diagr) == 0 && (sol_data[s_idx].diagl & can_data[c_idx].diagl) == 0;
         }
@@ -70,14 +69,13 @@ uint64_t cpuSolver::count_solutions(size_t sol_size, const diags_packed_t* __res
 
 __attribute__ ((target_clones("default", "sse2", "sse4.2", "avx2")))
 static uint32_t count_solutions_fixed(size_t batch, size_t sol_size, const diags_packed_t* __restrict__ sol_data,
-                                          const aligned_vec<diags_packed_t>& candidates) {
-    const diags_packed_t* __restrict__ can_data = candidates.data();
+                                          const diags_packed_t* __restrict__ can_data) {
 
     // prevent overflow in result variable
     assert(sol_size * batch < UINT32_MAX);
     uint32_t solutions_cnt = static_cast<uint32_t>(sol_size * batch);
     for(size_t s_idx = 0; s_idx < sol_size; s_idx++) {
-#pragma omp simd reduction(-:solutions_cnt) aligned(can_data: AVX2_alignment)
+#pragma omp simd reduction(-:solutions_cnt)
         for(size_t c_idx = 0; c_idx < batch; c_idx++) {
             solutions_cnt -= (sol_data[s_idx].diagr & can_data[c_idx].diagr) || (sol_data[s_idx].diagl & can_data[c_idx].diagl);
         }
@@ -86,7 +84,7 @@ static uint32_t count_solutions_fixed(size_t batch, size_t sol_size, const diags
     return solutions_cnt;
 }
 
-uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem, lut_t &lookup_candidates_high_prob, lut_t &lookup_candidates_low_prob) {
+uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem) {
     uint64_t solutions_cnt = 0;
 
     // we only work with perfect lookup tables that have all possible column combinations,
@@ -102,10 +100,19 @@ uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem, 
     const auto& lookup_idx = found->second;
     const bool high_prob = prob_mask & search_elem.diagr;
 
-    auto& candidates_vec = high_prob ? lookup_candidates_high_prob[lookup_idx] : lookup_candidates_low_prob[lookup_idx];
-    candidates_vec.push_back(search_elem);
+    auto& candidates_size = high_prob ? high_cand_sizes[lookup_idx] : low_cand_sizes[lookup_idx];
+    uint32_t candidate_idx = candidates_size.fetch_add(1);
+    diags_packed_t *candidates_vec = high_prob ? flat_cand_high_prob.data() + lookup_idx*max_candidates : flat_cand_low_prob.data() + lookup_idx*max_candidates;
+    while(candidate_idx >= max_candidates) {
+        candidate_idx = candidates_size.load();
+        if(candidate_idx < max_candidates) {
+            candidate_idx = candidates_size.fetch_add(1);
+        }
+    }
 
-    if(candidates_vec.size() == max_candidates) {
+    candidates_vec[candidate_idx] = search_elem;
+
+    if(candidate_idx == (max_candidates - 1)) {
         if(accel) {
             //uint64_t cpu_cnt = count_solutions_fixed(max_candidates, lookup_solutions_low_prob[lookup_idx], candidates_vec);
             //size_t lut_len = lookup_solutions_low_prob[lookup_idx].size();
@@ -139,7 +146,7 @@ uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem, 
             stat_high_prob += max_candidates;
 #endif
         }
-        candidates_vec.clear();
+        candidates_size.store(0);
     }
 
     return solutions_cnt;
@@ -243,32 +250,22 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
 
   const size_t thread_cnt = std::min(omp_threads, start_cnt);
 
-  // first index: lookup table index
-  std::vector<lut_t> thread_luts_high_prob;
-  std::vector<lut_t> thread_luts_low_prob;
+  // store candidates
+  flat_cand_low_prob.resize(lookup_hash.size() * max_candidates);
+  flat_cand_high_prob.resize(lookup_hash.size() * max_candidates);
 
-  for(size_t t = 0; t < thread_cnt; t++) {
-      lut_t new_lut_high_prob;
-      lut_t new_lut_low_prob;
+  // sizes for flat lookup tables
+  low_cand_sizes = std::vector<std::atomic<uint32_t>>(lookup_hash.size());
+  high_cand_sizes = std::vector<std::atomic<uint32_t>>(lookup_hash.size());
 
-      new_lut_high_prob.reserve(lookup_hash.size());
-      new_lut_low_prob.reserve(lookup_hash.size());
-      for (size_t i = 0; i < lookup_hash.size(); i++) {
-          new_lut_high_prob.emplace_back(aligned_vec<diags_packed_t>(max_candidates));
-          new_lut_low_prob.emplace_back(aligned_vec<diags_packed_t>(max_candidates));
-      }
-
-      thread_luts_high_prob.push_back(std::move(new_lut_high_prob));
-      thread_luts_low_prob.push_back(std::move(new_lut_low_prob));
-
+  for(size_t i = 0; i < lookup_hash.size(); i++) {
+      std::atomic_init(&low_cand_sizes[i], UINT32_C(0));
+      std::atomic_init(&high_cand_sizes[i], UINT32_C(0));
   }
+
 
 #pragma omp parallel for reduction(+ : num_lookup) num_threads(thread_cnt) schedule(dynamic)
   for (uint_fast32_t cnt = 0; cnt < start_cnt; cnt++) {
-    const size_t thread_num = static_cast<size_t>(omp_get_thread_num());
-    lut_t& lookup_candidates_high_prob = thread_luts_high_prob[thread_num];
-    lut_t& lookup_candidates_low_prob = thread_luts_low_prob[thread_num];
-
     uint_fast32_t cols[MAXN], posibs[MAXN]; // Our backtracking 'stack'
     uint_fast32_t diagl[MAXN], diagr[MAXN];
     int8_t rest[MAXN]; // number of rows left
@@ -327,7 +324,7 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
                 stat_solver_diagl.update(candidate.diagl);
                 stat_solver_diagr.update(candidate.diagr);
 #endif
-                num_lookup += get_solution_cnt(static_cast<uint32_t>(bit), candidate, lookup_candidates_high_prob, lookup_candidates_low_prob);
+                num_lookup += get_solution_cnt(static_cast<uint32_t>(bit), candidate);
                 continue;
             }
 
@@ -359,24 +356,23 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
 
   std::cout << "Cleaning Lookup table" << std::endl;
   auto lut_clean_time_start = std::chrono::high_resolution_clock::now();
+
 #pragma omp parallel for reduction(+ : num_lookup) num_threads(thread_cnt) schedule(dynamic)
-  for(size_t t = 0; t < thread_luts_high_prob.size(); t++) {
-      for (auto& it : lookup_hash) {
-          auto lookup_idx = it.second;
-          if(thread_luts_high_prob[t][lookup_idx].size() > 0) {
-              const diags_packed_t* sol_start = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
-              num_lookup += count_solutions(low_prob_sizes[lookup_idx], sol_start, thread_luts_high_prob[t][lookup_idx]);
-#if STATS == 1
-              stat_high_prob += thread_luts_high_prob[t][lookup_idx].size();
-#endif
-          }
-          if(thread_luts_low_prob[t][lookup_idx].size() > 0) {
-              const diags_packed_t* sol_start_low = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
-              const diags_packed_t* sol_start_high = flat_lookup_high_prob.data() + lookup_idx * high_prob_stride;
-              num_lookup += count_solutions(low_prob_sizes[lookup_idx], sol_start_low, thread_luts_low_prob[t][lookup_idx]);
-              num_lookup += count_solutions(high_prob_sizes[lookup_idx], sol_start_high, thread_luts_low_prob[t][lookup_idx]);
-          }
-      }
+  for(size_t lookup_idx = 0; lookup_idx < lookup_hash.size(); lookup_idx++) {
+      const diags_packed_t* sol_start_low = flat_lookup_low_prob.data() + lookup_idx * low_prob_stride;
+      const diags_packed_t* sol_start_high = flat_lookup_high_prob.data() + lookup_idx * high_prob_stride;
+      size_t sol_low_size = low_prob_sizes[lookup_idx];
+      size_t sol_high_size = high_prob_sizes[lookup_idx];
+
+      const diags_packed_t* cand_start_low = flat_cand_low_prob.data() + lookup_idx*max_candidates;
+      const diags_packed_t* cand_start_high = flat_cand_high_prob.data() + lookup_idx*max_candidates;
+
+      // high prob cleanup
+      num_lookup += count_solutions(sol_low_size, high_cand_sizes[lookup_idx], sol_start_low, cand_start_high);
+
+      // low prob cleanup
+      num_lookup += count_solutions(sol_low_size, low_cand_sizes[lookup_idx], sol_start_low, cand_start_low);
+      num_lookup += count_solutions(sol_high_size, low_cand_sizes[lookup_idx], sol_start_high, cand_start_low);
   }
 
 #if STATS == 1

@@ -226,7 +226,7 @@ bool ClAccell::init(const cpuSolver::lut_t& lut_high_prob, const cpuSolver::lut_
     return true;
 }
 
-uint64_t ClAccell::count(uint32_t lut_idx, const aligned_vec<diags_packed_t>& candidates, bool prob)
+uint64_t ClAccell::count(uint32_t lut_idx, const diags_packed_t *candidates, bool prob)
 {
     const auto& lut_lens = prob ? lut_high_prob_sizes : lut_low_prob_sizes;
     if(lut_lens[lut_idx] == 0) {
@@ -235,7 +235,7 @@ uint64_t ClAccell::count(uint32_t lut_idx, const aligned_vec<diags_packed_t>& ca
 
     const std::lock_guard<std::mutex> queue_guard(queue_lock);
     cl_int err = 0;
-    err = cmdQueue.enqueueWriteBuffer(clCanBuff, CL_TRUE, 0, candidates.size() * sizeof (diags_packed_t), candidates.data());
+    err = cmdQueue.enqueueWriteBuffer(clCanBuff, CL_TRUE, 0, cpuSolver::max_candidates * sizeof (diags_packed_t), candidates);
 
     // allocate dynamic args
     err = clKernel.setArg(0, prob ? clFlatHighProb : clFlatLowProb);

@@ -14,7 +14,7 @@ public:
 
     static ClAccell *makeClAccell(unsigned int platform, unsigned int device);
     bool init(const cpuSolver::lut_t &lut_high_prob, const cpuSolver::lut_t &lut_low_prob);
-    uint64_t count(uint32_t lut_idx, const aligned_vec<diags_packed_t> &candidates, bool prob);
+    uint64_t count(uint32_t lut_idx, const diags_packed_t *candidates, bool prob);
     uint64_t get_count();
 
 private:
