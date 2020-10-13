@@ -123,6 +123,7 @@ public:
     size_t init_lookup(uint8_t depth, uint32_t skip_mask);
     using lut_t = std::vector<aligned_vec<diags_packed_t>>;
     static constexpr size_t max_candidates = 1024*16;
+    using cand_lock_t = std::atomic<uint64_t>;
 
 
 private:
@@ -161,8 +162,8 @@ private:
     std::vector<diags_packed_t> flat_cand_high_prob;
 
     // sizes for flat candidates tables
-    std::vector<std::atomic<uint32_t>> low_cand_sizes;
-    std::vector<std::atomic<uint32_t>> high_cand_sizes;
+    std::vector<cand_lock_t> low_cand_sizes;
+    std::vector<cand_lock_t> high_cand_sizes;
 
     uint32_t prob_mask;
 

@@ -13,8 +13,10 @@ public:
     ClAccell();
 
     static ClAccell *makeClAccell(unsigned int platform, unsigned int device);
-    bool init(const cpuSolver::lut_t &lut_high_prob, const cpuSolver::lut_t &lut_low_prob);
-    uint64_t count(uint32_t lut_idx, const diags_packed_t *candidates, bool prob);
+    bool init(size_t threads, size_t lut_size, size_t high_stride, size_t low_stride,
+              const std::vector<uint32_t>& high_sizes, const std::vector<uint32_t>& low_sizes,
+              const diags_packed_t* lut_high_prob, const diags_packed_t* lut_low_prob);
+    uint64_t count(size_t thread, uint32_t lut_idx, cpuSolver::cand_lock_t *lck, const diags_packed_t *candidates, bool prob);
     uint64_t get_count();
 
 private:
@@ -22,22 +24,23 @@ private:
     cl::Context context;
     cl::Device device;
     cl::Program program;
-    cl::CommandQueue cmdQueue;
-    cl::Kernel clKernel;
+    std::vector<cl::Kernel> clKernel;
 
     cl::Buffer clFlatHighProb;
     cl::Buffer clFlatLowProb;
-    cl::Buffer clResultCnt;
 
-    cl::Buffer clCanBuff;
+    std::vector<cl::CommandQueue> cmdQueue;
+    std::vector<cl::Buffer> clResultCnt;
+
+    std::vector<cl::Buffer> clCanBuff;
     size_t first_free = 0;
-    std::mutex queue_lock;
-
 
     uint64_t cnt = 0;
 
-    size_t lut_high_prob_max = 0;
-    size_t lut_low_prob_max = 0;
+    size_t threads = 0;
+
+    size_t lut_high_prob_stride = 0;
+    size_t lut_low_prob_stride = 0;
     std::vector<uint32_t> lut_high_prob_sizes;
     std::vector<uint32_t> lut_low_prob_sizes;
 };
