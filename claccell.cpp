@@ -197,6 +197,24 @@ bool ClAccell::init(size_t threads, size_t lut_size, size_t high_stride, size_t 
             return {};
         }
 
+        // create device kernel for cleanup
+        clKernelCleanup.push_back(cl::Kernel(program, "count_solutions_trans_cleanup", &err));
+        if(err != CL_SUCCESS) {
+            std::cout << "cl::Kernel failed: " << err << std::endl;
+            return {};
+        }
+
+        // allocate fixed args
+        err = clKernelCleanup[t].setArg(1, clCanBuff[t]);
+        if(err != CL_SUCCESS) {
+            std::cout << "setArg 1 failed: " << err << std::endl;
+            return {};
+        }
+        err = clKernelCleanup[t].setArg(2, clResultCnt[t]);
+        if(err != CL_SUCCESS) {
+            std::cout << "setArg 2 failed: " << err << std::endl;
+            return {};
+        }
     }
 
     return true;
@@ -204,6 +222,7 @@ bool ClAccell::init(size_t threads, size_t lut_size, size_t high_stride, size_t 
 
 uint64_t ClAccell::count(size_t thread, uint32_t lut_idx, cpuSolver::cand_lock_t* lck, const diags_packed_t *candidates, bool prob)
 {
+    // check which lut to use
     const auto& lut_lens = prob ? lut_high_prob_sizes : lut_low_prob_sizes;
     cl_int err = 0;
 
@@ -211,14 +230,11 @@ uint64_t ClAccell::count(size_t thread, uint32_t lut_idx, cpuSolver::cand_lock_t
     if(!prob) {
         err = cmdQueue[thread].enqueueWriteBuffer(clCanBuff[thread], CL_FALSE, 0, cpuSolver::max_candidates * sizeof (diags_packed_t), candidates);
         if(lck) {
-            lck->store(0);
+            lck->store(0, std::memory_order_relaxed);
         }
     }
 
     if(lut_lens[lut_idx] == 0) {
-        if(lck) {
-            lck->store(0);
-        }
         return 0;
     }
 
@@ -247,6 +263,53 @@ uint64_t ClAccell::count(size_t thread, uint32_t lut_idx, cpuSolver::cand_lock_t
     // Launch kernel on the compute device.
     err = cmdQueue[thread].enqueueNDRangeKernel(clKernel[thread], cl::NullRange,
                                         cl::NDRange{cpuSolver::max_candidates/32}, cl::NDRange{32});
+    if(err != CL_SUCCESS) {
+        std::cout << "enqueueNDRangeKernel failed: " << err << std::endl;
+        return {};
+    }
+
+    return 0;
+}
+
+uint64_t ClAccell::count_cleanup(size_t thread, uint32_t lut_idx, size_t cand_cnt, const diags_packed_t *candidates, bool prob)
+{
+    const auto& lut_lens = prob ? lut_high_prob_sizes : lut_low_prob_sizes;
+    cl_int err = 0;
+
+    // can skip upload on high prob, already uploaded by prev low prob execution
+    if(!prob) {
+        err = cmdQueue[thread].enqueueWriteBuffer(clCanBuff[thread], CL_FALSE, 0, cpuSolver::max_candidates * sizeof (diags_packed_t), candidates);
+    }
+
+    if(lut_lens[lut_idx] == 0) {
+        return 0;
+    }
+
+    // allocate dynamic args
+    err = clKernelCleanup[thread].setArg(0, prob ? clFlatHighProb : clFlatLowProb);
+    if(err != CL_SUCCESS) {
+        std::cout << "setArg 0 failed: " << err << std::endl;
+        return {};
+    }
+
+    uint32_t stride = prob ? lut_high_prob_stride : lut_low_prob_stride;
+
+    err = clKernelCleanup[thread].setArg(3, stride*lut_idx);
+    if(err != CL_SUCCESS) {
+        std::cout << "setArg 3 failed: " << err << std::endl;
+        return {};
+    }
+
+    uint32_t range = prob ? lut_high_prob_sizes[lut_idx] : lut_low_prob_sizes[lut_idx];
+    err = clKernelCleanup[thread].setArg(4, range);
+    if(err != CL_SUCCESS) {
+        std::cout << "setArg 4 failed: " << err << std::endl;
+        return {};
+    }
+
+    // Launch kernel on the compute device.
+    err = cmdQueue[thread].enqueueNDRangeKernel(clKernelCleanup[thread], cl::NullRange,
+                                        cl::NDRange{cand_cnt}, cl::NullRange);
     if(err != CL_SUCCESS) {
         std::cout << "enqueueNDRangeKernel failed: " << err << std::endl;
         return {};

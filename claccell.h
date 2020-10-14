@@ -19,12 +19,14 @@ public:
     uint64_t count(size_t thread, uint32_t lut_idx, cpuSolver::cand_lock_t *lck, const diags_packed_t *candidates, bool prob);
     uint64_t get_count();
 
+    uint64_t count_cleanup(size_t thread, uint32_t lut_idx, size_t cand_cnt, const diags_packed_t *candidates, bool prob);
 private:
     uint64_t get_cl_count();
     cl::Context context;
     cl::Device device;
     cl::Program program;
     std::vector<cl::Kernel> clKernel;
+    std::vector<cl::Kernel> clKernelCleanup;
 
     cl::Buffer clFlatHighProb;
     cl::Buffer clFlatLowProb;

@@ -67,6 +67,7 @@ kernel void count_solutions_trans(__global const diags_packed_t* restrict lut,
     uint gstart_x = (get_global_id(0) - lidx)*LOCAL_FACTOR;
 
     uint limit = gstart_x + size_x*LOCAL_FACTOR;
+    //#pragma unroll 2
     for(int j = (gstart_x + lidx*16); j < limit; j += (size_x*16)) {
         diags_packed_t can_diag0 = candidates[j+0];
         diags_packed_t can_diag1 = candidates[j+1];
@@ -120,6 +121,41 @@ kernel void count_solutions_trans(__global const diags_packed_t* restrict lut,
             cnt += (tmpD.x == 0) && (tmpD.y == 0);
             cnt += (tmpE.x == 0) && (tmpE.y == 0);
             cnt += (tmpF.x == 0) && (tmpF.y == 0);
+        }
+    }
+
+    //printf("G: %d, L: %d, cnt: %d, lut_diagr: %x, lut_diagl: %x\n", G, L, cnt, lut_diagr, lut_diagl);
+
+    out_cnt[G] += cnt;
+}
+
+kernel void count_solutions_trans_cleanup(__global const diags_packed_t* restrict lut,
+                                  __global const diags_packed_t* restrict candidates,
+                                  __global uint* restrict out_cnt, uint lut_offset, uint lut_count) {
+    uint cnt = 0;
+
+    __local diags_packed_t l_lut[LOCAL_MEM];
+
+    //initialize  shared local memory
+    int lidx = get_local_id(0);
+    int size_x = get_local_size(0);
+    for(uint index = lidx; index < lut_count; index += size_x ) {
+        l_lut[index] = lut[lut_offset + index];
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint gsize_x = get_global_size(0);
+    uint gstart_x = (get_global_id(0) - lidx);
+
+    uint limit = gstart_x + size_x;
+    //#pragma unroll 2
+    for(int j = (gstart_x + lidx); j < limit; j += (size_x)) {
+        diags_packed_t can_diag0 = candidates[j+0];
+
+        for(int i = 0; i < lut_count; i++) {
+            diags_packed_t lut_diag = l_lut[i];
+            diags_packed_t tmp0 = lut_diag & can_diag0;
+            cnt += (tmp0.x == 0) && (tmp0.y == 0);
         }
     }
 

@@ -140,7 +140,7 @@ uint64_t cpuSolver::get_solution_cnt(uint32_t cols, diags_packed_t search_elem) 
 #endif
         if (!high_prob) {
             //if(accel) {
-                /*uint64_t accel_cnt = */accel->count(omp_get_thread_num(), lookup_idx, nullptr, candidates_vec, true);
+                /*uint64_t accel_cnt = */ accel->count(omp_get_thread_num(), lookup_idx, nullptr, candidates_vec, true);
                 //uint64_t cpu_cnt = count_solutions_fixed(max_candidates, lookup_solutions_high_prob[lookup_idx], candidates_vec);
                 //size_t lut_len = lookup_solutions_high_prob[lookup_idx].size();
                 //assert(cpu_cnt == accel_cnt);
@@ -315,21 +315,18 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
             uint_fast32_t lookahead2 = (bit | (new_diagl << (LOOKAHEAD - 1)) | (new_diagr >> (LOOKAHEAD - 1)));
             uint_fast32_t allowed2 = l_rest > static_cast<int8_t>(0);
 
-            if(allowed2 && ((lookahead2 == UINT_FAST32_MAX) || (lookahead1 == UINT_FAST32_MAX))) {
+            if(/*allowed2 &&*/ ((lookahead2 == UINT_FAST32_MAX) || (lookahead1 == UINT_FAST32_MAX))) {
                 continue;
             }
 
-#if 0
-            if(allowed2 && (lookahead1 == lookahead2)) {
-                uint_fast32_t adjacent = ~lookahead1 & (~lookahead1 << 1);
-                if ((adjacent != 0) && (__builtin_popcount(~lookahead1) == 2)) {
-                    continue;
-                }
-
-            }
-#endif
 
             if (l_rest == rest_lookup) {
+                if(lookahead1 == lookahead2) {
+                    uint_fast32_t adjacent = ~lookahead1 & (~lookahead1 << 1);
+                    if ((adjacent != 0) && (__builtin_popcount(~lookahead1) == 2)) {
+                        continue;
+                    }
+                }
                 // compute final lookup_depth stages via hashtable lookup
                 diags_packed_t candidate = {static_cast<uint32_t>(new_diagr), static_cast<uint32_t>(new_diagl)};
 #if STATS == 1
@@ -376,12 +373,21 @@ uint64_t cpuSolver::solve_subboard(const std::vector<start_condition_t> &starts)
       const diags_packed_t* cand_start_low = flat_cand_low_prob.data() + lookup_idx*max_candidates;
       const diags_packed_t* cand_start_high = flat_cand_high_prob.data() + lookup_idx*max_candidates;
 
-      // high prob cleanup
-      num_lookup += count_solutions(sol_low_size, high_cand_sizes[lookup_idx], sol_start_low, cand_start_high);
+      if(accel) {
+          // high prob candidates
+          accel->count_cleanup(omp_get_thread_num(), lookup_idx, high_cand_sizes[lookup_idx], cand_start_high, false);
 
-      // low prob cleanup
-      num_lookup += count_solutions(sol_low_size, low_cand_sizes[lookup_idx], sol_start_low, cand_start_low);
-      num_lookup += count_solutions(sol_high_size, low_cand_sizes[lookup_idx], sol_start_high, cand_start_low);
+          // low prob candidates
+          accel->count_cleanup(omp_get_thread_num(), lookup_idx, low_cand_sizes[lookup_idx], cand_start_low, false);
+          accel->count_cleanup(omp_get_thread_num(), lookup_idx, low_cand_sizes[lookup_idx], cand_start_low, true);
+      } else {
+          // high prob cleanup
+          num_lookup += count_solutions(sol_low_size, high_cand_sizes[lookup_idx], sol_start_low, cand_start_high);
+
+          // low prob cleanup
+          num_lookup += count_solutions(sol_low_size, low_cand_sizes[lookup_idx], sol_start_low, cand_start_low);
+          num_lookup += count_solutions(sol_high_size, low_cand_sizes[lookup_idx], sol_start_high, cand_start_low);
+      }
   }
 
 #if STATS == 1

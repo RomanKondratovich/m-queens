@@ -122,7 +122,7 @@ public:
     uint64_t solve_subboard(const std::vector<start_condition_t>& starts);
     size_t init_lookup(uint8_t depth, uint32_t skip_mask);
     using lut_t = std::vector<aligned_vec<diags_packed_t>>;
-    static constexpr size_t max_candidates = 1024*16;
+    static constexpr size_t max_candidates = 1024*32;
     using cand_lock_t = std::atomic<uint64_t>;
 
 
